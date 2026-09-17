@@ -110,7 +110,7 @@ export function watchAlertText(watch: Watch, train: SeatTrain | null, summary: s
     ? [train.general ? "일반실" : null, train.special ? "특실" : null].filter(Boolean).join("/")
     : "";
   const lines = [
-    `KTX 잔여석: ${watch.depName}→${watch.arrName}`,
+    `KTX 잔여석: ${watch.depName}→${watch.arrName}${watch.trainNo ? ` #${watch.trainNo}` : ""}`,
     `${watch.date} ${train ? `${train.depTime} ${train.trainName.includes("공개현황") ? train.trainNo : `#${train.trainNo}`}` : watch.timeStart}`,
     kinds ? `${kinds} 가능` : summary,
     "예매는 코레일에서 직접 하세요.",

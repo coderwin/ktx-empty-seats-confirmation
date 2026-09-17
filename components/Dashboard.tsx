@@ -48,6 +48,7 @@ export default function Dashboard() {
   const [timeEnd, setTimeEnd] = useState("09:00");
   const [trains, setTrains] = useState<TimetableTrain[]>([]);
   const [timetableError, setTimetableError] = useState("");
+  const [selectedTrain, setSelectedTrain] = useState<TimetableTrain | null>(null);
 
   const loadMe = useCallback(async () => {
     const response = await fetch("/api/auth/me");
@@ -105,6 +106,14 @@ export default function Dashboard() {
         const json = (await response.json()) as { trains?: TimetableTrain[]; error?: string };
         setTrains(json.trains ?? []);
         setTimetableError(json.error ?? "");
+        setSelectedTrain((current) => {
+          if (!current) return null;
+          return (json.trains ?? []).some(
+            (train) => train.trainNo === current.trainNo && train.depTime === current.depTime,
+          )
+            ? current
+            : null;
+        });
       })();
     }, 400);
     return () => clearTimeout(timer);
@@ -160,7 +169,14 @@ export default function Dashboard() {
     const response = await fetch("/api/watches", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ depName, arrName, date, timeStart, timeEnd }),
+      body: JSON.stringify({
+        depName,
+        arrName,
+        date,
+        timeStart,
+        timeEnd,
+        trainNo: selectedTrain?.trainNo ?? null,
+      }),
     });
     const json = (await response.json()) as { error?: string };
     setBusy(false);
@@ -169,6 +185,7 @@ export default function Dashboard() {
       return;
     }
     await loadWatches();
+    setSelectedTrain(null);
   }
 
   async function patchWatch(id: number, body: { active?: boolean; refresh?: boolean }) {
@@ -197,6 +214,13 @@ export default function Dashboard() {
   function swapStations() {
     setDepName(arrName);
     setArrName(depName);
+    setSelectedTrain(null);
+  }
+
+  function toggleTrain(train: TimetableTrain) {
+    setSelectedTrain((current) =>
+      current?.trainNo === train.trainNo && current.depTime === train.depTime ? null : train,
+    );
   }
 
   return (
@@ -300,31 +324,59 @@ export default function Dashboard() {
                 <input className="mt-1 w-full rounded-xl border border-[#d8d0c2] bg-white px-3 py-2" type="time" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
               </label>
             </div>
-            <p className="mt-3 text-xs text-[#5c6570]">KTX만 감시합니다. 1분마다 확인하고, 같은 매진→잔여 구간에서는 알림을 한 번만 보냅니다. 열차 단위 조회가 막히면 코레일 공개 시간대 현황을 사용합니다.</p>
-            <button className="mt-4 w-full rounded-full bg-[#c81e1e] py-3 text-sm font-bold text-white disabled:opacity-50" disabled={busy || remaining <= 0} type="submit">
-              감시 시작
-            </button>
-
             <div className="mt-5 border-t border-[#ece6da] pt-4">
-              <h3 className="text-sm font-bold">시간표 미리보기</h3>
+              <div className="flex items-center justify-between gap-2">
+                <h3 className="text-sm font-bold">시간표 미리보기</h3>
+                {selectedTrain ? (
+                  <button
+                    className="text-xs text-[#16324f] underline underline-offset-2"
+                    onClick={() => setSelectedTrain(null)}
+                    type="button"
+                  >
+                    전체 시간대
+                  </button>
+                ) : (
+                  <span className="text-xs text-[#5c6570]">행을 누르면 그 편만 감시</span>
+                )}
+              </div>
               {timetableError ? <p className="mt-2 text-xs text-[#9a6700]">{timetableError}</p> : null}
               {trains.length === 0 && !timetableError ? (
                 <p className="mt-2 text-xs text-[#5c6570]">해당 구간에 표시할 KTX가 없습니다.</p>
               ) : (
                 <ul className="mt-2 max-h-48 space-y-1 overflow-auto text-sm">
-                  {trains.map((train) => (
-                    <li key={`${train.trainNo}-${train.depTime}`} className="flex justify-between rounded-lg bg-[#f7f3ea] px-3 py-1.5">
-                      <span>
-                        {train.depTime} → {train.arrTime}
-                      </span>
-                      <span className="text-[#5c6570]">
-                        {train.trainName} #{train.trainNo}
-                      </span>
-                    </li>
-                  ))}
+                  {trains.map((train) => {
+                    const selected =
+                      selectedTrain?.trainNo === train.trainNo && selectedTrain.depTime === train.depTime;
+                    return (
+                      <li key={`${train.trainNo}-${train.depTime}`}>
+                        <button
+                          className={`flex w-full justify-between rounded-lg px-3 py-1.5 text-left ${
+                            selected ? "bg-[#16324f] text-white" : "bg-[#f7f3ea]"
+                          }`}
+                          onClick={() => toggleTrain(train)}
+                          type="button"
+                        >
+                          <span>
+                            {train.depTime} → {train.arrTime}
+                          </span>
+                          <span className={selected ? "text-white/80" : "text-[#5c6570]"}>
+                            {train.trainName} #{train.trainNo}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </div>
+            <p className="mt-3 text-xs text-[#5c6570]">
+              {selectedTrain
+                ? `${selectedTrain.trainName} #${selectedTrain.trainNo} (${selectedTrain.depTime})만 감시합니다. 열차 단위 조회가 막히면 해당 시간대 공개 현황으로 대체합니다.`
+                : "KTX만 감시합니다. 시간표에서 열차를 고르면 그 편만 봅니다. 고르지 않으면 시간 범위 전체입니다. 1분마다 확인하고, 같은 매진→잔여 구간에서는 알림을 한 번만 보냅니다."}
+            </p>
+            <button className="mt-4 w-full rounded-full bg-[#c81e1e] py-3 text-sm font-bold text-white disabled:opacity-50" disabled={busy || remaining <= 0} type="submit">
+              {selectedTrain ? `#${selectedTrain.trainNo} 감시 시작` : "감시 시작"}
+            </button>
           </form>
 
           <section className="rounded-2xl bg-[#fffdf8] p-6 shadow-sm">
@@ -343,7 +395,8 @@ export default function Dashboard() {
                           {watch.arrName}
                         </p>
                         <p className="mt-1 text-sm text-[#5c6570]">
-                          {formatDateLabel(watch.date)} · {watch.timeStart}–{watch.timeEnd} · {watch.trainType}
+                          {formatDateLabel(watch.date)} · {watch.timeStart}–{watch.timeEnd}
+                          {watch.trainNo ? ` · #${watch.trainNo}` : ` · ${watch.trainType}`}
                         </p>
                       </div>
                       <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(watch.lastStatus)}`}>
