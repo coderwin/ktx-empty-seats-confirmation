@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatCheckedAt, formatDateLabel, kstToday, kstTomorrow } from "@/lib/kst";
-import { KORAIL_BOOK_URL, MAX_WATCHES } from "@/lib/types";
-import type { Station, TimetableTrain, Watch, WatchStatus } from "@/lib/types";
+import { KORAIL_BOOK_URL, MAX_WATCHES, SEAT_CLASS_LABEL } from "@/lib/types";
+import type { SeatClass, Station, TimetableTrain, Watch, WatchStatus } from "@/lib/types";
 
 type Me = {
   user: { id: number; nickname: string; kakaoConnected: boolean; isLocal: boolean } | null;
@@ -49,6 +49,7 @@ export default function Dashboard() {
   const [trains, setTrains] = useState<TimetableTrain[]>([]);
   const [timetableError, setTimetableError] = useState("");
   const [selectedTrain, setSelectedTrain] = useState<TimetableTrain | null>(null);
+  const [seatClass, setSeatClass] = useState<SeatClass>("any");
 
   const loadMe = useCallback(async () => {
     const response = await fetch("/api/auth/me");
@@ -176,6 +177,7 @@ export default function Dashboard() {
         timeStart,
         timeEnd,
         trainNo: selectedTrain?.trainNo ?? null,
+        seatClass,
       }),
     });
     const json = (await response.json()) as { error?: string };
@@ -324,6 +326,23 @@ export default function Dashboard() {
                 <input className="mt-1 w-full rounded-xl border border-[#d8d0c2] bg-white px-3 py-2" type="time" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
               </label>
             </div>
+            <fieldset className="mt-3">
+              <legend className="text-sm">좌석</legend>
+              <div className="mt-1 grid grid-cols-3 gap-2">
+                {(["any", "general", "special"] as const).map((value) => (
+                  <button
+                    key={value}
+                    className={`rounded-full px-3 py-2 text-xs ${
+                      seatClass === value ? "bg-[#16324f] text-white" : "border border-[#d8d0c2] bg-white"
+                    }`}
+                    onClick={() => setSeatClass(value)}
+                    type="button"
+                  >
+                    {SEAT_CLASS_LABEL[value]}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
             <div className="mt-5 border-t border-[#ece6da] pt-4">
               <div className="flex items-center justify-between gap-2">
                 <h3 className="text-sm font-bold">시간표 미리보기</h3>
@@ -396,7 +415,8 @@ export default function Dashboard() {
                         </p>
                         <p className="mt-1 text-sm text-[#5c6570]">
                           {formatDateLabel(watch.date)} · {watch.timeStart}–{watch.timeEnd}
-                          {watch.trainNo ? ` · #${watch.trainNo}` : ` · ${watch.trainType}`}
+                          {watch.trainNo ? ` · #${watch.trainNo}` : ""}
+                          {` · ${SEAT_CLASS_LABEL[watch.seatClass]}`}
                         </p>
                       </div>
                       <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(watch.lastStatus)}`}>

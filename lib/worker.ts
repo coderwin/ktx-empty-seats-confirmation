@@ -35,7 +35,10 @@ export async function checkWatch(watch: Watch) {
       timeStart: watch.timeStart,
       timeEnd: watch.timeEnd,
     });
-    const result = summarizeSeats(filterSeatsForWatch(trains, watch.trainNo), watch.trainNo);
+    const result = summarizeSeats(filterSeatsForWatch(trains, watch.trainNo), {
+      trainNo: watch.trainNo,
+      seatClass: watch.seatClass,
+    });
     let notifiedAt: number | null = null;
 
     if (result.available && !watch.lastSeatAvailable) {

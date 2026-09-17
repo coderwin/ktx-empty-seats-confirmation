@@ -1,5 +1,6 @@
 import { compactDate, compactTimeToHhmm, hhmmToCompact } from "./kst";
-import type { SeatTrain } from "./types";
+import type { SeatClass, SeatTrain } from "./types";
+import { SEAT_CLASS_LABEL } from "./types";
 
 const SEARCH_URL =
   "https://smart.letskorail.com/classes/com.korail.mobile.seatMovie.ScheduleView";
@@ -325,15 +326,35 @@ export function isRemainderSeats(trains: SeatTrain[]) {
   return trains.some((train) => train.trainName.includes("공개현황"));
 }
 
+export function matchesSeatClass(train: SeatTrain, seatClass: SeatClass = "any") {
+  if (seatClass === "general") return train.general;
+  if (seatClass === "special") return train.special;
+  return train.general || train.special;
+}
+
 export function filterSeatsForWatch(trains: SeatTrain[], trainNo: string | null) {
   if (!trainNo || isRemainderSeats(trains)) return trains;
   return trains.filter((train) => train.trainNo === trainNo);
 }
 
-export function summarizeSeats(trains: SeatTrain[], watchTrainNo?: string | null) {
-  const open = trains.filter((train) => train.general || train.special);
+export function summarizeSeats(
+  trains: SeatTrain[],
+  options?: { trainNo?: string | null; seatClass?: SeatClass },
+) {
+  const watchTrainNo = options?.trainNo ?? null;
+  const seatClass = options?.seatClass ?? "any";
+  const open = trains.filter((train) => matchesSeatClass(train, seatClass));
   const remainder = isRemainderSeats(trains);
   const trainLabel = watchTrainNo ? ` #${watchTrainNo}` : "";
+  const classLabel = SEAT_CLASS_LABEL[seatClass];
+
+  if (remainder && seatClass === "special") {
+    return {
+      available: false,
+      summary: `공개 현황은 특실을 구분하지 않습니다${trainLabel}`,
+      highlight: null as SeatTrain | null,
+    };
+  }
 
   if (open.length === 0) {
     return {
@@ -342,8 +363,8 @@ export function summarizeSeats(trains: SeatTrain[], watchTrainNo?: string | null
         ? `공개 현황 매진${trainLabel} (${trains.map((train) => `${train.depTime} ${train.trainNo}`).join(", ")})`
         : trains.length
           ? watchTrainNo
-            ? `#${watchTrainNo} 매진`
-            : `매진 (${trains.length}편 확인)`
+            ? `#${watchTrainNo} ${classLabel} 매진`
+            : `${classLabel} 매진 (${trains.length}편 확인)`
           : watchTrainNo
             ? `해당 시간에 #${watchTrainNo} 없음`
             : "해당 시간에 열차 없음",
@@ -356,13 +377,16 @@ export function summarizeSeats(trains: SeatTrain[], watchTrainNo?: string | null
     return {
       available: true,
       summary: watchTrainNo
-        ? `공개 현황 ${first.depTime}대 ${first.trainNo}. #${watchTrainNo} 확정은 아님. 코레일에서 확인`
-        : `공개 현황 ${first.depTime}대 ${first.trainNo}. 열차 단위는 코레일에서 확인`,
+        ? `공개 현황 ${first.depTime}대 ${first.trainNo}. #${watchTrainNo} ${classLabel} 확정은 아님. 코레일에서 확인`
+        : `공개 현황 ${first.depTime}대 ${first.trainNo}. ${classLabel} 확정은 아님. 코레일에서 확인`,
       highlight: first,
     };
   }
 
-  const kinds = [first.general ? "일반실" : null, first.special ? "특실" : null].filter(Boolean);
+  const kinds = [
+    (seatClass === "any" || seatClass === "general") && first.general ? "일반실" : null,
+    (seatClass === "any" || seatClass === "special") && first.special ? "특실" : null,
+  ].filter(Boolean);
   return {
     available: true,
     summary: `${first.depTime} #${first.trainNo} ${kinds.join("/")} 가능${open.length > 1 ? ` 외 ${open.length - 1}편` : ""}`,

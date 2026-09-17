@@ -1,7 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { User, Watch, WatchStatus } from "./types";
+import type { SeatClass, User, Watch, WatchStatus } from "./types";
+import { isSeatClass } from "./types";
 
 const globalForDb = globalThis as unknown as { ktxDb?: Database.Database };
 
@@ -38,6 +39,7 @@ function migrate(db: Database.Database) {
       time_end TEXT NOT NULL,
       train_type TEXT NOT NULL DEFAULT 'KTX',
       train_no TEXT,
+      seat_class TEXT NOT NULL DEFAULT 'any',
       active INTEGER NOT NULL DEFAULT 1,
       last_checked_at INTEGER,
       last_status TEXT NOT NULL DEFAULT 'pending',
@@ -52,6 +54,9 @@ function migrate(db: Database.Database) {
   const watchColumns = db.pragma("table_info(watches)") as { name: string }[];
   if (!watchColumns.some((column) => column.name === "train_no")) {
     db.exec("ALTER TABLE watches ADD COLUMN train_no TEXT");
+  }
+  if (!watchColumns.some((column) => column.name === "seat_class")) {
+    db.exec("ALTER TABLE watches ADD COLUMN seat_class TEXT NOT NULL DEFAULT 'any'");
   }
 }
 
@@ -90,6 +95,7 @@ type WatchRow = {
   time_end: string;
   train_type: string;
   train_no: string | null;
+  seat_class: string | null;
   active: number;
   last_checked_at: number | null;
   last_status: WatchStatus;
@@ -125,6 +131,7 @@ function mapWatch(row: WatchRow): Watch {
     timeEnd: row.time_end,
     trainType: row.train_type,
     trainNo: row.train_no,
+    seatClass: isSeatClass(row.seat_class ?? "any") ? (row.seat_class ?? "any") : "any",
     active: row.active === 1,
     lastCheckedAt: row.last_checked_at,
     lastStatus: row.last_status,
@@ -277,13 +284,14 @@ export function insertWatch(input: {
   timeStart: string;
   timeEnd: string;
   trainNo?: string | null;
+  seatClass?: SeatClass;
 }) {
   const result = getDb()
     .prepare(
       `INSERT INTO watches (
         user_id, dep_name, arr_name, dep_tago_id, arr_tago_id, korail_dep, korail_arr,
-        date, time_start, time_end, train_type, train_no, active, last_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', ?, 1, 'pending', ?)`,
+        date, time_start, time_end, train_type, train_no, seat_class, active, last_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', ?, ?, 1, 'pending', ?)`,
     )
     .run(
       input.userId,
@@ -297,6 +305,7 @@ export function insertWatch(input: {
       input.timeStart,
       input.timeEnd,
       input.trainNo ?? null,
+      input.seatClass ?? "any",
       Date.now(),
     );
   return getWatch(Number(result.lastInsertRowid))!;
