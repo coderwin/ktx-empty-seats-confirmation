@@ -1,5 +1,5 @@
 import { getUserById, updateUserTokens } from "./db";
-import { KORAIL_BOOK_URL } from "./types";
+import { KORAIL_BOOK_URL, SEAT_CLASS_LABEL } from "./types";
 import type { SeatTrain, Watch } from "./types";
 
 const AUTH_URL = "https://kauth.kakao.com";
@@ -107,10 +107,13 @@ async function validAccessToken(userId: number) {
 
 export function watchAlertText(watch: Watch, train: SeatTrain | null, summary: string) {
   const kinds = train
-    ? [train.general ? "일반실" : null, train.special ? "특실" : null].filter(Boolean).join("/")
+    ? [
+        (watch.seatClass === "any" || watch.seatClass === "general") && train.general ? "일반실" : null,
+        (watch.seatClass === "any" || watch.seatClass === "special") && train.special ? "특실" : null,
+      ].filter(Boolean).join("/")
     : "";
   const lines = [
-    `KTX 잔여석: ${watch.depName}→${watch.arrName}${watch.trainNo ? ` #${watch.trainNo}` : ""}`,
+    `KTX 잔여석: ${watch.depName}→${watch.arrName}${watch.trainNo ? ` #${watch.trainNo}` : ""} ${SEAT_CLASS_LABEL[watch.seatClass]}`,
     `${watch.date} ${train ? `${train.depTime} ${train.trainName.includes("공개현황") ? train.trainNo : `#${train.trainNo}`}` : watch.timeStart}`,
     kinds ? `${kinds} 가능` : summary,
     "예매는 코레일에서 직접 하세요.",

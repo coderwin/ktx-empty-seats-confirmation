@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { countWatches, getWatch, insertWatch, listWatches } from "@/lib/db";
 import { findStation } from "@/lib/stations";
 import { isPastDate } from "@/lib/kst";
-import { MAX_WATCHES } from "@/lib/types";
+import { MAX_WATCHES, isSeatClass } from "@/lib/types";
 import { checkWatch } from "@/lib/worker";
 
 export async function GET() {
@@ -23,6 +23,7 @@ export async function POST(request: Request) {
     timeStart?: string;
     timeEnd?: string;
     trainNo?: string;
+    seatClass?: string;
   };
 
   const dep = findStation(body.depName ?? "");
@@ -43,6 +44,10 @@ export async function POST(request: Request) {
   if (trainNo && !/^\d{1,8}$/.test(trainNo)) {
     return NextResponse.json({ error: "열차 번호를 확인하세요." }, { status: 400 });
   }
+  const seatClass = body.seatClass ?? "any";
+  if (!isSeatClass(seatClass)) {
+    return NextResponse.json({ error: "좌석 등급을 확인하세요." }, { status: 400 });
+  }
   if (countWatches(user.id) >= MAX_WATCHES) {
     return NextResponse.json(
       { error: `개인용 감시는 최대 ${MAX_WATCHES}개입니다.` },
@@ -62,6 +67,7 @@ export async function POST(request: Request) {
     timeStart: body.timeStart,
     timeEnd: body.timeEnd,
     trainNo,
+    seatClass,
   });
 
   await checkWatch(watch);
