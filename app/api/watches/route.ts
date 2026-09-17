@@ -22,6 +22,7 @@ export async function POST(request: Request) {
     date?: string;
     timeStart?: string;
     timeEnd?: string;
+    trainNo?: string;
   };
 
   const dep = findStation(body.depName ?? "");
@@ -37,6 +38,10 @@ export async function POST(request: Request) {
   }
   if (!body.timeStart || !body.timeEnd || body.timeStart >= body.timeEnd) {
     return NextResponse.json({ error: "시간 범위를 확인하세요." }, { status: 400 });
+  }
+  const trainNo = body.trainNo?.trim() || null;
+  if (trainNo && !/^\d{1,8}$/.test(trainNo)) {
+    return NextResponse.json({ error: "열차 번호를 확인하세요." }, { status: 400 });
   }
   if (countWatches(user.id) >= MAX_WATCHES) {
     return NextResponse.json(
@@ -56,6 +61,7 @@ export async function POST(request: Request) {
     date: body.date,
     timeStart: body.timeStart,
     timeEnd: body.timeEnd,
+    trainNo,
   });
 
   await checkWatch(watch);

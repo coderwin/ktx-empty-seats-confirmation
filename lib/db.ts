@@ -37,6 +37,7 @@ function migrate(db: Database.Database) {
       time_start TEXT NOT NULL,
       time_end TEXT NOT NULL,
       train_type TEXT NOT NULL DEFAULT 'KTX',
+      train_no TEXT,
       active INTEGER NOT NULL DEFAULT 1,
       last_checked_at INTEGER,
       last_status TEXT NOT NULL DEFAULT 'pending',
@@ -47,6 +48,11 @@ function migrate(db: Database.Database) {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
   `);
+
+  const watchColumns = db.pragma("table_info(watches)") as { name: string }[];
+  if (!watchColumns.some((column) => column.name === "train_no")) {
+    db.exec("ALTER TABLE watches ADD COLUMN train_no TEXT");
+  }
 }
 
 export function getDb() {
@@ -83,6 +89,7 @@ type WatchRow = {
   time_start: string;
   time_end: string;
   train_type: string;
+  train_no: string | null;
   active: number;
   last_checked_at: number | null;
   last_status: WatchStatus;
@@ -117,6 +124,7 @@ function mapWatch(row: WatchRow): Watch {
     timeStart: row.time_start,
     timeEnd: row.time_end,
     trainType: row.train_type,
+    trainNo: row.train_no,
     active: row.active === 1,
     lastCheckedAt: row.last_checked_at,
     lastStatus: row.last_status,
@@ -268,13 +276,14 @@ export function insertWatch(input: {
   date: string;
   timeStart: string;
   timeEnd: string;
+  trainNo?: string | null;
 }) {
   const result = getDb()
     .prepare(
       `INSERT INTO watches (
         user_id, dep_name, arr_name, dep_tago_id, arr_tago_id, korail_dep, korail_arr,
-        date, time_start, time_end, train_type, active, last_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', 1, 'pending', ?)`,
+        date, time_start, time_end, train_type, train_no, active, last_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', ?, 1, 'pending', ?)`,
     )
     .run(
       input.userId,
@@ -287,6 +296,7 @@ export function insertWatch(input: {
       input.date,
       input.timeStart,
       input.timeEnd,
+      input.trainNo ?? null,
       Date.now(),
     );
   return getWatch(Number(result.lastInsertRowid))!;

@@ -321,18 +321,32 @@ export async function searchSeats(input: {
   return searchRemainder(input);
 }
 
-export function summarizeSeats(trains: SeatTrain[]) {
+export function isRemainderSeats(trains: SeatTrain[]) {
+  return trains.some((train) => train.trainName.includes("공개현황"));
+}
+
+export function filterSeatsForWatch(trains: SeatTrain[], trainNo: string | null) {
+  if (!trainNo || isRemainderSeats(trains)) return trains;
+  return trains.filter((train) => train.trainNo === trainNo);
+}
+
+export function summarizeSeats(trains: SeatTrain[], watchTrainNo?: string | null) {
   const open = trains.filter((train) => train.general || train.special);
-  const remainder = trains.some((train) => train.trainName.includes("공개현황"));
+  const remainder = isRemainderSeats(trains);
+  const trainLabel = watchTrainNo ? ` #${watchTrainNo}` : "";
 
   if (open.length === 0) {
     return {
       available: false,
       summary: remainder
-        ? `공개 현황 매진 (${trains.map((train) => `${train.depTime} ${train.trainNo}`).join(", ")})`
+        ? `공개 현황 매진${trainLabel} (${trains.map((train) => `${train.depTime} ${train.trainNo}`).join(", ")})`
         : trains.length
-          ? `매진 (${trains.length}편 확인)`
-          : "해당 시간에 열차 없음",
+          ? watchTrainNo
+            ? `#${watchTrainNo} 매진`
+            : `매진 (${trains.length}편 확인)`
+          : watchTrainNo
+            ? `해당 시간에 #${watchTrainNo} 없음`
+            : "해당 시간에 열차 없음",
       highlight: null as SeatTrain | null,
     };
   }
@@ -341,7 +355,9 @@ export function summarizeSeats(trains: SeatTrain[]) {
   if (remainder) {
     return {
       available: true,
-      summary: `공개 현황 ${first.depTime}대 ${first.trainNo}. 열차 단위는 코레일에서 확인`,
+      summary: watchTrainNo
+        ? `공개 현황 ${first.depTime}대 ${first.trainNo}. #${watchTrainNo} 확정은 아님. 코레일에서 확인`
+        : `공개 현황 ${first.depTime}대 ${first.trainNo}. 열차 단위는 코레일에서 확인`,
       highlight: first,
     };
   }

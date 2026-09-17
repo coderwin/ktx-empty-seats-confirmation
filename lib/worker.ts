@@ -1,7 +1,7 @@
 import cron from "node-cron";
 import { getUserById, listActiveWatches, saveWatchCheck } from "./db";
 import { isPastDate } from "./kst";
-import { searchSeats, summarizeSeats } from "./seats";
+import { searchSeats, summarizeSeats, filterSeatsForWatch } from "./seats";
 import { sendKakaoMemo, watchAlertText } from "./kakao";
 import { POLL_INTERVAL_MS } from "./types";
 import type { Watch } from "./types";
@@ -35,7 +35,7 @@ export async function checkWatch(watch: Watch) {
       timeStart: watch.timeStart,
       timeEnd: watch.timeEnd,
     });
-    const result = summarizeSeats(trains);
+    const result = summarizeSeats(filterSeatsForWatch(trains, watch.trainNo), watch.trainNo);
     let notifiedAt: number | null = null;
 
     if (result.available && !watch.lastSeatAvailable) {

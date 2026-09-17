@@ -32,6 +32,7 @@ export type Watch = {
   timeStart: string;
   timeEnd: string;
   trainType: string;
+  trainNo: string | null;
   active: boolean;
   lastCheckedAt: number | null;
   lastStatus: WatchStatus;
