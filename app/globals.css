@@ -1,0 +1,25 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f3eee4;
+  --ink: #122033;
+  --muted: #5c6570;
+  --line: #d8d0c2;
+  --card: #fffdf8;
+  --red: #c81e1e;
+  --navy: #16324f;
+  --ok: #1f7a4d;
+  --warn: #9a6700;
+}
+
+@theme inline {
+  --font-sans: var(--font-noto);
+}
+
+body {
+  background:
+    radial-gradient(1200px 500px at 10% -10%, #1b3a5c 0%, transparent 55%),
+    linear-gradient(180deg, #122033 0%, #122033 220px, var(--paper) 220px);
+  color: var(--ink);
+  font-family: var(--font-sans), sans-serif;
+}
