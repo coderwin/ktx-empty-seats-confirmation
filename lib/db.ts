@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import type { SeatClass, User, Watch, WatchStatus } from "./types";
-import { isSeatClass } from "./types";
+import type { User, Watch, WatchStatus } from "./types";
+import { parseSlotIds, serializeSlotIds, slotsFromTimeRange, timeRangeFromSlots } from "./remainder";
 
 const globalForDb = globalThis as unknown as { ktxDb?: Database.Database };
 
@@ -46,6 +46,8 @@ function migrate(db: Database.Database) {
       last_summary TEXT,
       last_seat_available INTEGER NOT NULL DEFAULT 0,
       last_notified_at INTEGER,
+      slot_ids TEXT NOT NULL DEFAULT '',
+      last_slot_codes TEXT,
       created_at INTEGER NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
@@ -57,6 +59,23 @@ function migrate(db: Database.Database) {
   }
   if (!watchColumns.some((column) => column.name === "seat_class")) {
     db.exec("ALTER TABLE watches ADD COLUMN seat_class TEXT NOT NULL DEFAULT 'any'");
+  }
+  if (!watchColumns.some((column) => column.name === "slot_ids")) {
+    db.exec("ALTER TABLE watches ADD COLUMN slot_ids TEXT NOT NULL DEFAULT ''");
+  }
+  if (!watchColumns.some((column) => column.name === "last_slot_codes")) {
+    db.exec("ALTER TABLE watches ADD COLUMN last_slot_codes TEXT");
+  }
+
+  const missingSlots = db
+    .prepare(`SELECT id, time_start, time_end FROM watches WHERE slot_ids IS NULL OR slot_ids = ''`)
+    .all() as { id: number; time_start: string; time_end: string }[];
+  const fillSlots = db.prepare(`UPDATE watches SET slot_ids = ?, time_start = ?, time_end = ? WHERE id = ?`);
+  for (const row of missingSlots) {
+    const ids = slotsFromTimeRange(row.time_start, row.time_end);
+    const slotIds = serializeSlotIds(ids.length ? ids : ["2"]);
+    const range = timeRangeFromSlots(slotIds.split(","));
+    fillSlots.run(slotIds, range.timeStart, range.timeEnd, row.id);
   }
 }
 
@@ -102,8 +121,20 @@ type WatchRow = {
   last_summary: string | null;
   last_seat_available: number;
   last_notified_at: number | null;
+  slot_ids: string | null;
+  last_slot_codes: string | null;
   created_at: number;
 };
+
+function parseSlotCodes(value: string | null) {
+  if (!value) return {} as Record<string, string>;
+  try {
+    const parsed = JSON.parse(value) as Record<string, string>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 function mapUser(row: UserRow): User {
   return {
@@ -129,14 +160,14 @@ function mapWatch(row: WatchRow): Watch {
     date: row.date,
     timeStart: row.time_start,
     timeEnd: row.time_end,
+    slotIds: parseSlotIds(row.slot_ids),
     trainType: row.train_type,
-    trainNo: row.train_no,
-    seatClass: isSeatClass(row.seat_class ?? "any") ? (row.seat_class ?? "any") : "any",
     active: row.active === 1,
     lastCheckedAt: row.last_checked_at,
     lastStatus: row.last_status,
     lastSummary: row.last_summary,
     lastSeatAvailable: row.last_seat_available === 1,
+    lastSlotCodes: parseSlotCodes(row.last_slot_codes),
     lastNotifiedAt: row.last_notified_at,
     createdAt: row.created_at,
   };
@@ -281,17 +312,16 @@ export function insertWatch(input: {
   korailDep: string;
   korailArr: string;
   date: string;
-  timeStart: string;
-  timeEnd: string;
-  trainNo?: string | null;
-  seatClass?: SeatClass;
+  slotIds: string[];
 }) {
+  const slotIds = serializeSlotIds(input.slotIds);
+  const range = timeRangeFromSlots(slotIds.split(","));
   const result = getDb()
     .prepare(
       `INSERT INTO watches (
         user_id, dep_name, arr_name, dep_tago_id, arr_tago_id, korail_dep, korail_arr,
-        date, time_start, time_end, train_type, train_no, seat_class, active, last_status, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', ?, ?, 1, 'pending', ?)`,
+        date, time_start, time_end, train_type, train_no, seat_class, slot_ids, active, last_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'KTX', NULL, 'any', ?, 1, 'pending', ?)`,
     )
     .run(
       input.userId,
@@ -302,10 +332,9 @@ export function insertWatch(input: {
       input.korailDep,
       input.korailArr,
       input.date,
-      input.timeStart,
-      input.timeEnd,
-      input.trainNo ?? null,
-      input.seatClass ?? "any",
+      range.timeStart,
+      range.timeEnd,
+      slotIds,
       Date.now(),
     );
   return getWatch(Number(result.lastInsertRowid))!;
@@ -338,6 +367,7 @@ export function saveWatchCheck(
     lastStatus: WatchStatus;
     lastSummary: string;
     lastSeatAvailable: boolean;
+    lastSlotCodes?: Record<string, string>;
     lastNotifiedAt?: number | null;
     active?: boolean;
   },
@@ -346,6 +376,7 @@ export function saveWatchCheck(
     .prepare(
       `UPDATE watches
        SET last_checked_at = ?, last_status = ?, last_summary = ?, last_seat_available = ?,
+           last_slot_codes = COALESCE(?, last_slot_codes),
            last_notified_at = COALESCE(?, last_notified_at), active = COALESCE(?, active)
        WHERE id = ?`,
     )
@@ -354,6 +385,7 @@ export function saveWatchCheck(
       input.lastStatus,
       input.lastSummary,
       input.lastSeatAvailable ? 1 : 0,
+      input.lastSlotCodes ? JSON.stringify(input.lastSlotCodes) : null,
       input.lastNotifiedAt ?? null,
       input.active === undefined ? null : input.active ? 1 : 0,
       id,

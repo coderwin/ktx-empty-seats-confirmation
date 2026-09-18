@@ -2,13 +2,36 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatCheckedAt, formatDateLabel, kstToday, kstTomorrow } from "@/lib/kst";
-import { KORAIL_BOOK_URL, MAX_WATCHES, SEAT_CLASS_LABEL } from "@/lib/types";
-import type { SeatClass, Station, TimetableTrain, Watch, WatchStatus } from "@/lib/types";
+import { formatSlotList, TIME_SLOTS } from "@/lib/remainder";
+import { KORAIL_BOOK_URL, MAX_WATCHES } from "@/lib/types";
+import type { Station, TimetableTrain, Watch, WatchStatus } from "@/lib/types";
 
 type Me = {
   user: { id: number; nickname: string; kakaoConnected: boolean; isLocal: boolean } | null;
   kakaoConfigured: boolean;
   tagoConfigured: boolean;
+};
+
+type SlotCell = {
+  id: string;
+  start: string;
+  end: string;
+  code: string | null;
+  level: string;
+  open: boolean;
+};
+
+type RemainderBoard = {
+  error?: string;
+  lineLabel?: string;
+  direction?: "down" | "up";
+  directionLabel?: string;
+  published?: boolean;
+  hasDate?: boolean;
+  publishedLabel?: string;
+  stampLabel?: string;
+  down?: SlotCell[];
+  up?: SlotCell[];
 };
 
 const statusLabel: Record<WatchStatus, string> = {
@@ -34,6 +57,13 @@ function statusClass(status: WatchStatus) {
   }
 }
 
+function cellClass(cell: SlotCell, selected: boolean, mine: boolean) {
+  if (selected) return "bg-[#16324f] text-white";
+  if (cell.open) return mine ? "bg-[#e8f6ee] text-[#1f7a4d]" : "bg-[#f3f8f4] text-[#1f7a4d]";
+  if (cell.level === "매진") return mine ? "bg-[#eeeae3] text-[#5c6570]" : "bg-[#f7f4ee] text-[#8a8173]";
+  return "bg-[#f7f3ea] text-[#8a8173]";
+}
+
 export default function Dashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [stations, setStations] = useState<Station[]>([]);
@@ -44,12 +74,10 @@ export default function Dashboard() {
   const [depName, setDepName] = useState("서울");
   const [arrName, setArrName] = useState("부산");
   const [date, setDate] = useState(kstTomorrow());
-  const [timeStart, setTimeStart] = useState("06:00");
-  const [timeEnd, setTimeEnd] = useState("09:00");
+  const [selectedSlots, setSelectedSlots] = useState<string[]>([]);
+  const [board, setBoard] = useState<RemainderBoard | null>(null);
   const [trains, setTrains] = useState<TimetableTrain[]>([]);
   const [timetableError, setTimetableError] = useState("");
-  const [selectedTrain, setSelectedTrain] = useState<TimetableTrain | null>(null);
-  const [seatClass, setSeatClass] = useState<SeatClass>("any");
 
   const loadMe = useCallback(async () => {
     const response = await fetch("/api/auth/me");
@@ -95,11 +123,36 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!me?.user) {
+      setBoard(null);
+      return;
+    }
+    const timer = setTimeout(() => {
+      void (async () => {
+        const params = new URLSearchParams({ dep: depName, arr: arrName, date });
+        const response = await fetch(`/api/remainder?${params}`);
+        const json = (await response.json()) as RemainderBoard;
+        setBoard(json);
+        setSelectedSlots((current) => current.filter((id) => TIME_SLOTS.some((slot) => slot.id === id)));
+      })();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [me?.user, depName, arrName, date]);
+
+  useEffect(() => {
     if (!me?.user || !me.tagoConfigured) {
       setTrains([]);
       setTimetableError(me && !me.tagoConfigured ? "TAGO 키가 없어 시간표 미리보기는 생략합니다." : "");
       return;
     }
+    if (selectedSlots.length === 0) {
+      setTrains([]);
+      setTimetableError("");
+      return;
+    }
+    const slots = TIME_SLOTS.filter((slot) => selectedSlots.includes(slot.id));
+    const timeStart = slots[0]?.start ?? "00:00";
+    const timeEnd = slots.at(-1)?.end === "24:00" ? "23:59" : (slots.at(-1)?.end ?? "23:59");
     const timer = setTimeout(() => {
       void (async () => {
         const params = new URLSearchParams({ dep: depName, arr: arrName, date, timeStart, timeEnd });
@@ -107,18 +160,10 @@ export default function Dashboard() {
         const json = (await response.json()) as { trains?: TimetableTrain[]; error?: string };
         setTrains(json.trains ?? []);
         setTimetableError(json.error ?? "");
-        setSelectedTrain((current) => {
-          if (!current) return null;
-          return (json.trains ?? []).some(
-            (train) => train.trainNo === current.trainNo && train.depTime === current.depTime,
-          )
-            ? current
-            : null;
-        });
       })();
     }, 400);
     return () => clearTimeout(timer);
-  }, [me, depName, arrName, date, timeStart, timeEnd]);
+  }, [me, depName, arrName, date, selectedSlots]);
 
   const remaining = MAX_WATCHES - watches.length;
   const stationOptions = useMemo(
@@ -174,10 +219,7 @@ export default function Dashboard() {
         depName,
         arrName,
         date,
-        timeStart,
-        timeEnd,
-        trainNo: selectedTrain?.trainNo ?? null,
-        seatClass,
+        slotIds: selectedSlots,
       }),
     });
     const json = (await response.json()) as { error?: string };
@@ -187,7 +229,7 @@ export default function Dashboard() {
       return;
     }
     await loadWatches();
-    setSelectedTrain(null);
+    setSelectedSlots([]);
   }
 
   async function patchWatch(id: number, body: { active?: boolean; refresh?: boolean }) {
@@ -216,14 +258,19 @@ export default function Dashboard() {
   function swapStations() {
     setDepName(arrName);
     setArrName(depName);
-    setSelectedTrain(null);
+    setSelectedSlots([]);
   }
 
-  function toggleTrain(train: TimetableTrain) {
-    setSelectedTrain((current) =>
-      current?.trainNo === train.trainNo && current.depTime === train.depTime ? null : train,
+  function toggleSlot(id: string) {
+    setSelectedSlots((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id].sort(),
     );
   }
+
+  const rows = [
+    { key: "down" as const, label: "하행", cells: board?.down ?? [] },
+    { key: "up" as const, label: "상행", cells: board?.up ?? [] },
+  ];
 
   return (
     <div className="mx-auto min-h-screen max-w-5xl px-5 pb-16 pt-8">
@@ -232,11 +279,11 @@ export default function Dashboard() {
           <p className="text-xs tracking-[0.22em] text-[#d4a017]">PERSONAL KTX WATCH</p>
           <h1 className="mt-2 text-3xl font-bold">KTX 잔여석 알림</h1>
           <p className="mt-2 max-w-xl text-sm text-white/75">
-            자리가 나면 카카오톡으로 한 번 알려 줍니다. 예매는{" "}
+            공개 현황의 시간칸이 열리면 카카오톡으로 알려 줍니다. 어느 편인지는{" "}
             <a className="underline decoration-[#d4a017] underline-offset-4" href={KORAIL_BOOK_URL} target="_blank" rel="noreferrer">
               코레일
             </a>
-            에서 직접 하세요.
+            에서 확인하세요.
           </p>
         </div>
         {me?.user ? (
@@ -265,7 +312,7 @@ export default function Dashboard() {
         <section className="rounded-2xl bg-[#fffdf8] p-8 shadow-sm">
           <h2 className="text-xl font-bold">시작하기</h2>
           <p className="mt-2 text-sm text-[#5c6570]">
-            카카오로 로그인하면 잔여석이 날 때 나에게 보내기로 알림을 받습니다. 키를 아직 안 넣었다면 로컬로 감시 화면만 먼저 쓸 수 있습니다.
+            카카오로 로그인하면 칸이 열릴 때 나에게 보내기로 알림을 받습니다. 키를 아직 안 넣었다면 로컬로 감시 화면만 먼저 쓸 수 있습니다.
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             {me.kakaoConfigured ? (
@@ -283,7 +330,7 @@ export default function Dashboard() {
           </div>
         </section>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
           <form className="rounded-2xl bg-[#fffdf8] p-6 shadow-sm" onSubmit={(event) => void addWatch(event)}>
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-bold">감시 등록</h2>
@@ -316,85 +363,116 @@ export default function Dashboard() {
                 onChange={(e) => setDate(e.target.value)}
               />
             </label>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <label className="text-sm">
-                시작
-                <input className="mt-1 w-full rounded-xl border border-[#d8d0c2] bg-white px-3 py-2" type="time" value={timeStart} onChange={(e) => setTimeStart(e.target.value)} />
-              </label>
-              <label className="text-sm">
-                끝
-                <input className="mt-1 w-full rounded-xl border border-[#d8d0c2] bg-white px-3 py-2" type="time" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
-              </label>
-            </div>
-            <fieldset className="mt-3">
-              <legend className="text-sm">좌석</legend>
-              <div className="mt-1 grid grid-cols-3 gap-2">
-                {(["any", "general", "special"] as const).map((value) => (
-                  <button
-                    key={value}
-                    className={`rounded-full px-3 py-2 text-xs ${
-                      seatClass === value ? "bg-[#16324f] text-white" : "border border-[#d8d0c2] bg-white"
-                    }`}
-                    onClick={() => setSeatClass(value)}
-                    type="button"
-                  >
-                    {SEAT_CLASS_LABEL[value]}
-                  </button>
-                ))}
-              </div>
-            </fieldset>
+
             <div className="mt-5 border-t border-[#ece6da] pt-4">
-              <div className="flex items-center justify-between gap-2">
-                <h3 className="text-sm font-bold">시간표 미리보기</h3>
-                {selectedTrain ? (
-                  <button
-                    className="text-xs text-[#16324f] underline underline-offset-2"
-                    onClick={() => setSelectedTrain(null)}
-                    type="button"
-                  >
-                    전체 시간대
-                  </button>
-                ) : (
-                  <span className="text-xs text-[#5c6570]">행을 누르면 그 편만 감시</span>
-                )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-bold">시간칸 현황</h3>
+                {board?.stampLabel ? <span className="text-xs text-[#5c6570]">{board.stampLabel} 기준</span> : null}
               </div>
-              {timetableError ? <p className="mt-2 text-xs text-[#9a6700]">{timetableError}</p> : null}
-              {trains.length === 0 && !timetableError ? (
-                <p className="mt-2 text-xs text-[#5c6570]">해당 구간에 표시할 KTX가 없습니다.</p>
+              {board?.publishedLabel ? (
+                <p className="mt-1 text-xs text-[#5c6570]">지금은 {board.publishedLabel} 게시</p>
+              ) : null}
+              {board?.error ? <p className="mt-2 text-xs text-[#9a6700]">{board.error}</p> : null}
+              {!board?.error && board?.published === false ? (
+                <p className="mt-2 text-xs text-[#9a6700]">
+                  {board.lineLabel}은 지금 게시 대상이 아닙니다. 등록은 할 수 있고, 해당 노선이 올라오면 확인합니다.
+                </p>
+              ) : null}
+              {!board?.error && board?.hasDate === false ? (
+                <p className="mt-2 text-xs text-[#9a6700]">이 날짜는 공개 현황에 없습니다. 다른 날짜를 고르세요.</p>
+              ) : null}
+              {!board?.error && board?.directionLabel ? (
+                <p className="mt-1 text-xs text-[#5c6570]">
+                  이 구간은 {board.lineLabel} {board.directionLabel}입니다. 칸을 눌러 고르세요.
+                </p>
+              ) : null}
+              <div className="mt-3 overflow-x-auto">
+                <table className="w-full min-w-[420px] text-center text-xs">
+                  <thead>
+                    <tr>
+                      <th className="pb-2 font-normal text-[#5c6570]" />
+                      {TIME_SLOTS.map((slot) => (
+                        <th key={slot.id} className="pb-2 font-normal text-[#5c6570]">
+                          {slot.start.slice(0, 5)}
+                          <br />
+                          {slot.end.slice(0, 5)}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {rows.map((row) => {
+                      const mine = board?.direction === row.key;
+                      return (
+                        <tr key={row.key}>
+                          <td className={`pr-2 text-left font-bold ${mine ? "text-[#16324f]" : "text-[#8a8173]"}`}>
+                            {row.label}
+                            {mine ? " · 내 구간" : ""}
+                          </td>
+                          {TIME_SLOTS.map((slot) => {
+                            const cell = row.cells.find((item) => item.id === slot.id) ?? {
+                              id: slot.id,
+                              start: slot.start,
+                              end: slot.end,
+                              code: null,
+                              level: "없음",
+                              open: false,
+                            };
+                            const selected = mine && selectedSlots.includes(cell.id);
+                            return (
+                              <td key={`${row.key}-${cell.id}`} className="p-0.5">
+                                <button
+                                  className={`w-full rounded-lg px-1 py-2 ${cellClass(cell, selected, mine)}`}
+                                  disabled={!mine || Boolean(board?.error)}
+                                  onClick={() => toggleSlot(cell.id)}
+                                  type="button"
+                                >
+                                  {cell.level}
+                                </button>
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-5 border-t border-[#ece6da] pt-4">
+              <h3 className="text-sm font-bold">이 칸의 편 (참고)</h3>
+              <p className="mt-1 text-xs text-[#5c6570]">빈 편이 아닙니다. 그 시간에 있는 열차 목록입니다.</p>
+              {selectedSlots.length === 0 ? (
+                <p className="mt-2 text-xs text-[#5c6570]">칸을 고르면 시간표가 나옵니다.</p>
+              ) : timetableError ? (
+                <p className="mt-2 text-xs text-[#9a6700]">{timetableError}</p>
+              ) : trains.length === 0 ? (
+                <p className="mt-2 text-xs text-[#5c6570]">해당 칸에 표시할 KTX가 없습니다.</p>
               ) : (
-                <ul className="mt-2 max-h-48 space-y-1 overflow-auto text-sm">
-                  {trains.map((train) => {
-                    const selected =
-                      selectedTrain?.trainNo === train.trainNo && selectedTrain.depTime === train.depTime;
-                    return (
-                      <li key={`${train.trainNo}-${train.depTime}`}>
-                        <button
-                          className={`flex w-full justify-between rounded-lg px-3 py-1.5 text-left ${
-                            selected ? "bg-[#16324f] text-white" : "bg-[#f7f3ea]"
-                          }`}
-                          onClick={() => toggleTrain(train)}
-                          type="button"
-                        >
-                          <span>
-                            {train.depTime} → {train.arrTime}
-                          </span>
-                          <span className={selected ? "text-white/80" : "text-[#5c6570]"}>
-                            {train.trainName} #{train.trainNo}
-                          </span>
-                        </button>
-                      </li>
-                    );
-                  })}
+                <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-sm">
+                  {trains.map((train) => (
+                    <li key={`${train.trainNo}-${train.depTime}`} className="flex justify-between rounded-lg bg-[#f7f3ea] px-3 py-1.5">
+                      <span>
+                        {train.depTime} → {train.arrTime}
+                      </span>
+                      <span className="text-[#5c6570]">
+                        {train.trainName} #{train.trainNo}
+                      </span>
+                    </li>
+                  ))}
                 </ul>
               )}
             </div>
             <p className="mt-3 text-xs text-[#5c6570]">
-              {selectedTrain
-                ? `${selectedTrain.trainName} #${selectedTrain.trainNo} (${selectedTrain.depTime})만 감시합니다. 열차 단위 조회가 막히면 해당 시간대 공개 현황으로 대체합니다.`
-                : "KTX만 감시합니다. 시간표에서 열차를 고르면 그 편만 봅니다. 고르지 않으면 시간 범위 전체입니다. 1분마다 확인하고, 같은 매진→잔여 구간에서는 알림을 한 번만 보냅니다."}
+              이 칸이 열리면 알림을 보냅니다. 어느 편인지는 코레일에서 확인하세요. 같은 칸이 다시 매진되었다가 열릴 때만 다시 알립니다.
             </p>
-            <button className="mt-4 w-full rounded-full bg-[#c81e1e] py-3 text-sm font-bold text-white disabled:opacity-50" disabled={busy || remaining <= 0} type="submit">
-              {selectedTrain ? `#${selectedTrain.trainNo} 감시 시작` : "감시 시작"}
+            <button
+              className="mt-4 w-full rounded-full bg-[#c81e1e] py-3 text-sm font-bold text-white disabled:opacity-50"
+              disabled={busy || remaining <= 0 || selectedSlots.length === 0 || Boolean(board?.error)}
+              type="submit"
+            >
+              {selectedSlots.length ? `${formatSlotList(selectedSlots)} 감시 시작` : "칸을 선택하세요"}
             </button>
           </form>
 
@@ -414,9 +492,7 @@ export default function Dashboard() {
                           {watch.arrName}
                         </p>
                         <p className="mt-1 text-sm text-[#5c6570]">
-                          {formatDateLabel(watch.date)} · {watch.timeStart}–{watch.timeEnd}
-                          {watch.trainNo ? ` · #${watch.trainNo}` : ""}
-                          {` · ${SEAT_CLASS_LABEL[watch.seatClass]}`}
+                          {formatDateLabel(watch.date)} · {formatSlotList(watch.slotIds)}
                         </p>
                       </div>
                       <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${statusClass(watch.lastStatus)}`}>
@@ -466,7 +542,7 @@ export default function Dashboard() {
       {notice ? <p className="mt-4 rounded-xl bg-[#e8f6ee] px-4 py-3 text-sm text-[#1f7a4d]">{notice}</p> : null}
 
       <p className="mt-8 text-xs text-[#5c6570]">
-        공식 잔여석 API는 없습니다. 공개 열차 검색 또는 코레일 시간대 현황을 1분 간격으로만 확인하고, 코레일 계정은 저장하지 않습니다.
+        공식 잔여석 API는 없습니다. 코레일 공개 시간칸 현황만 1분 간격으로 확인하고, 코레일 계정은 저장하지 않습니다.
       </p>
     </div>
   );
