@@ -1,6 +1,6 @@
 import { getUserById, updateUserTokens } from "./db";
-import { KORAIL_BOOK_URL, SEAT_CLASS_LABEL } from "./types";
-import type { SeatTrain, Watch } from "./types";
+import { KORAIL_BOOK_URL } from "./types";
+import type { Watch } from "./types";
 
 const AUTH_URL = "https://kauth.kakao.com";
 const API_URL = "https://kapi.kakao.com";
@@ -105,18 +105,21 @@ async function validAccessToken(userId: number) {
   }
 }
 
-export function watchAlertText(watch: Watch, train: SeatTrain | null, summary: string) {
-  const kinds = train
-    ? [
-        (watch.seatClass === "any" || watch.seatClass === "general") && train.general ? "일반실" : null,
-        (watch.seatClass === "any" || watch.seatClass === "special") && train.special ? "특실" : null,
-      ].filter(Boolean).join("/")
-    : "";
+export function watchAlertText(input: {
+  watch: Watch;
+  directionLabel: string;
+  opened: { label: string; level: string }[];
+  trains: { depTime: string; trainNo: string }[];
+}) {
+  const slotPart = input.opened.map((slot) => `${slot.label} ${slot.level}`).join(", ");
+  const trainPart = input.trains
+    .slice(0, 4)
+    .map((train) => `${train.depTime} #${train.trainNo}`)
+    .join(", ");
   const lines = [
-    `KTX 잔여석: ${watch.depName}→${watch.arrName}${watch.trainNo ? ` #${watch.trainNo}` : ""} ${SEAT_CLASS_LABEL[watch.seatClass]}`,
-    `${watch.date} ${train ? `${train.depTime} ${train.trainName.includes("공개현황") ? train.trainNo : `#${train.trainNo}`}` : watch.timeStart}`,
-    kinds ? `${kinds} 가능` : summary,
-    "예매는 코레일에서 직접 하세요.",
+    `${input.watch.depName}→${input.watch.arrName} ${input.directionLabel} ${slotPart}`,
+    trainPart ? `이 칸 편: ${trainPart}` : "이 칸 편 목록은 시간표에서 확인",
+    "편 확정 아님. 코레일에서 확인",
   ];
   return lines.join("\n").slice(0, 200);
 }

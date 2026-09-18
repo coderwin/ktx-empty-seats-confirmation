@@ -3,7 +3,8 @@ import { requireUser } from "@/lib/auth";
 import { countWatches, getWatch, insertWatch, listWatches } from "@/lib/db";
 import { findStation } from "@/lib/stations";
 import { isPastDate } from "@/lib/kst";
-import { MAX_WATCHES, isSeatClass } from "@/lib/types";
+import { MAX_WATCHES } from "@/lib/types";
+import { parseSlotIds, watchRoute } from "@/lib/remainder";
 import { checkWatch } from "@/lib/worker";
 
 export async function GET() {
@@ -20,10 +21,7 @@ export async function POST(request: Request) {
     depName?: string;
     arrName?: string;
     date?: string;
-    timeStart?: string;
-    timeEnd?: string;
-    trainNo?: string;
-    seatClass?: string;
+    slotIds?: string[];
   };
 
   const dep = findStation(body.depName ?? "");
@@ -34,19 +32,18 @@ export async function POST(request: Request) {
   if (dep.name === arr.name) {
     return NextResponse.json({ error: "출발역과 도착역이 같습니다." }, { status: 400 });
   }
+  if (!watchRoute(dep.korailName, arr.korailName)) {
+    return NextResponse.json(
+      { error: "이 구간은 공개 잔여석 현황 노선과 맞지 않습니다." },
+      { status: 400 },
+    );
+  }
   if (!body.date || isPastDate(body.date)) {
     return NextResponse.json({ error: "오늘 이후 날짜를 선택하세요." }, { status: 400 });
   }
-  if (!body.timeStart || !body.timeEnd || body.timeStart >= body.timeEnd) {
-    return NextResponse.json({ error: "시간 범위를 확인하세요." }, { status: 400 });
-  }
-  const trainNo = body.trainNo?.trim() || null;
-  if (trainNo && !/^\d{1,8}$/.test(trainNo)) {
-    return NextResponse.json({ error: "열차 번호를 확인하세요." }, { status: 400 });
-  }
-  const seatClass = body.seatClass ?? "any";
-  if (!isSeatClass(seatClass)) {
-    return NextResponse.json({ error: "좌석 등급을 확인하세요." }, { status: 400 });
+  const slotIds = parseSlotIds((body.slotIds ?? []).join(","));
+  if (slotIds.length === 0) {
+    return NextResponse.json({ error: "감시할 시간칸을 선택하세요." }, { status: 400 });
   }
   if (countWatches(user.id) >= MAX_WATCHES) {
     return NextResponse.json(
@@ -64,10 +61,7 @@ export async function POST(request: Request) {
     korailDep: dep.korailName,
     korailArr: arr.korailName,
     date: body.date,
-    timeStart: body.timeStart,
-    timeEnd: body.timeEnd,
-    trainNo,
-    seatClass,
+    slotIds,
   });
 
   await checkWatch(watch);
